@@ -66,3 +66,7 @@ htmlcov/
 
 # Build artifacts
 public/*.map
+
+# SQLite / DBs
+Backend_for_station_Radios/*.db
+*.db

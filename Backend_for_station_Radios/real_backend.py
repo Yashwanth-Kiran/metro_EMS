@@ -14,6 +14,7 @@ from typing import Dict, Any, List, Optional
 import datetime
 import json
 import logging
+import random
 
 # FastAPI app setup
 app = FastAPI(
@@ -141,11 +142,20 @@ def update_device_configuration(session_id: int, config: dict):
 def get_device_monitoring(session_id: int):
     if session_id not in SESSIONS:
         raise HTTPException(status_code=404, detail="Session not found")
+    # Add small jitter so frontend charts show live movement each second
+    base_signal = 75.0
+    base_snr = 42.0
+    base_tx = 130
+    base_rx = 110
+    signal = max(0.0, min(100.0, base_signal + random.uniform(-2.0, 2.0)))
+    snr = max(0.0, base_snr + random.uniform(-1.5, 1.5))
+    tx = max(0, base_tx + random.randint(-5, 5))
+    rx = max(0, base_rx + random.randint(-5, 5))
     return {
-        "signal_strength": 75.5,
-        "snr": 42.8,
-        "tx_rate": 135,
-        "rx_rate": 112
+        "signal_strength": round(signal, 2),
+        "snr": round(snr, 2),
+        "tx_rate": int(tx),
+        "rx_rate": int(rx)
     }
 
 @app.get("/device-sessions/{session_id}/logs")
@@ -153,9 +163,18 @@ def get_device_logs_enhanced(session_id: int):
     if session_id not in SESSIONS:
         raise HTTPException(status_code=404, detail="Session not found")
     current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # Generate a small variety of log messages to appear live
+    samples = [
+        ("INFO", "Health check OK"),
+        ("INFO", "SNMP poll success"),
+        ("INFO", "Link stable"),
+        ("INFO", f"Throughput sample tx={130 + random.randint(-5,5)} rx={110 + random.randint(-5,5)} Mbps"),
+        ("WARN", "RSSI below optimal threshold") if random.random() < 0.1 else ("INFO", "Metrics updated")
+    ]
+    chosen = random.sample(samples, k=2)
     return [
-        {"time": current_time, "type": "INFO", "message": "Station Radio initialized"},
-        {"time": current_time, "type": "INFO", "message": "Network stable"}
+        {"time": current_time, "type": t, "message": m}
+        for (t, m) in chosen
     ]
 
 @app.post("/auth/login", response_model=LoginResponse)

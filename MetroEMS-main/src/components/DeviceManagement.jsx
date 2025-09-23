@@ -1,8 +1,18 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import DeviceSummary from './DeviceSummary';
 import { ArrowLeft, Settings, Activity, UploadCloud, FileText, Trash2, Download, AlertCircle, CheckCircle, Loader } from 'lucide-react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { apiService } from '../services/apiService';
+import {
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend
+} from 'recharts';
 
 const tabs = [
   { name: 'Configuration', icon: <Settings size={18} /> },
@@ -52,11 +62,16 @@ const DeviceManagement = () => {
     rx: 113,
   });
   const [logs, setLogs] = useState(initialLogs);
+  const logsEndRef = useRef(null);
+  const logsContainerRef = useRef(null);
+  const [followTail, setFollowTail] = useState(true); // when true, keep auto-scrolling to bottom
   const [isBackendConnected, setIsBackendConnected] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
   const [deviceSession, setDeviceSession] = useState(null);
   const [realDeviceData, setRealDeviceData] = useState(null);
+  const [chartData, setChartData] = useState([]); // rolling 60s window
+  const MAX_POINTS = 60;
   
   const navigate = useNavigate();
   const { type } = useParams();
@@ -177,26 +192,60 @@ const DeviceManagement = () => {
           // Get real monitoring data from backend
           const monitoringData = await apiService.getDeviceMonitoring(sessionId);
           if (monitoringData) {
-            setMonitoring({
-              signal: monitoringData.signal_strength || monitoring.signal,
-              snr: monitoringData.snr || monitoring.snr,
-              tx: monitoringData.tx_rate || monitoring.tx,
-              rx: monitoringData.rx_rate || monitoring.rx,
+            const next = {
+              signal: Number(
+                monitoringData.signal_strength ?? monitoring.signal
+              ),
+              snr: Number(monitoringData.snr ?? monitoring.snr),
+              tx: Number(monitoringData.tx_rate ?? monitoring.tx),
+              rx: Number(monitoringData.rx_rate ?? monitoring.rx),
+            };
+            setMonitoring(next);
+            setChartData(prev => {
+              const t = new Date();
+              const point = {
+                t: t.toLocaleTimeString(),
+                signal: next.signal,
+                snr: next.snr,
+                tx: next.tx,
+                rx: next.rx,
+              };
+              const arr = [...prev, point];
+              return arr.length > MAX_POINTS ? arr.slice(arr.length - MAX_POINTS) : arr;
             });
           }
         } catch (err) {
           console.warn('Failed to fetch real monitoring data, using simulation:', err);
           // Fall back to simulation
-          setMonitoring({
-            signal: (70 + Math.random() * 10).toFixed(2),
-            snr: (40 + Math.random() * 10).toFixed(1),
+          const sim = {
+            signal: Number((70 + Math.random() * 10).toFixed(2)),
+            snr: Number((40 + Math.random() * 10).toFixed(1)),
             tx: Math.floor(120 + Math.random() * 40),
             rx: Math.floor(100 + Math.random() * 30),
+          };
+          setMonitoring(sim);
+          setChartData(prev => {
+            const t = new Date();
+            const point = { t: t.toLocaleTimeString(), ...sim };
+            const arr = [...prev, point];
+            return arr.length > MAX_POINTS ? arr.slice(arr.length - MAX_POINTS) : arr;
           });
         }
       } else {
         // Demo mode - keep lightweight placeholder values
-        setMonitoring(prev => ({ ...prev }));
+        const sim = {
+          signal: Number((70 + Math.random() * 10).toFixed(2)),
+          snr: Number((40 + Math.random() * 10).toFixed(1)),
+          tx: Math.floor(120 + Math.random() * 40),
+          rx: Math.floor(100 + Math.random() * 30),
+        };
+        setMonitoring(sim);
+        setChartData(prev => {
+          const t = new Date();
+          const point = { t: t.toLocaleTimeString(), ...sim };
+          const arr = [...prev, point];
+          return arr.length > MAX_POINTS ? arr.slice(arr.length - MAX_POINTS) : arr;
+        });
       }
     };
     
@@ -207,6 +256,81 @@ const DeviceManagement = () => {
     const interval = setInterval(updateMonitoring, 1000); // 1 second updates
     return () => clearInterval(interval);
   }, [activeTab, isBackendConnected, sessionId]);
+
+  // Live logs polling for Monitoring and Logs tabs
+  useEffect(() => {
+    if (!(activeTab === 'Monitoring' || activeTab === 'Logs')) return;
+    let cancelled = false;
+
+    const fetchLogs = async () => {
+      if (isBackendConnected && sessionId) {
+        try {
+          const newLogs = await apiService.getDeviceLogsEnhanced(sessionId);
+          if (!cancelled && Array.isArray(newLogs)) {
+            // Normalize possible shapes
+            const normalized = newLogs.map(l => ({
+              time: l.time || l.timestamp || new Date().toISOString(),
+              type: l.type || l.level || 'INFO',
+              message: l.message || l.msg || ''
+            }));
+            // Merge by time+message (simple de-dup)
+            setLogs(prev => {
+              const seen = new Set(prev.map(p => `${p.time}|${p.message}`));
+              const merged = [...prev];
+              for (const n of normalized) {
+                const key = `${n.time}|${n.message}`;
+                if (!seen.has(key)) merged.push(n);
+              }
+              // Keep last 500 logs
+              return merged.length > 500 ? merged.slice(merged.length - 500) : merged;
+            });
+          }
+        } catch (e) {
+          // ignore transient errors
+        }
+      } else {
+        // In demo, append a synthetic log periodically
+        const now = new Date();
+        setLogs(prev => {
+          const demo = {
+            time: `[${now.toLocaleString()}]` ,
+            type: Math.random() < 0.1 ? 'WARN' : 'INFO',
+            message: Math.random() < 0.5 ? 'Periodic health check OK' : 'Monitoring tick update'
+          };
+          const arr = [...prev, demo];
+          return arr.length > 200 ? arr.slice(arr.length - 200) : arr;
+        });
+      }
+    };
+
+    // Initial call and interval setup
+    fetchLogs();
+    const id = setInterval(fetchLogs, 1000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [activeTab, isBackendConnected, sessionId]);
+
+  // Auto-scroll the visible logs container only when following the tail
+  useEffect(() => {
+    const el = logsContainerRef.current;
+    if (!el || !followTail) return;
+    // Scroll the container to bottom without affecting the page scroll
+    el.scrollTop = el.scrollHeight;
+  }, [logs, followTail]);
+
+  // Detect user scroll position to toggle followTail off when scrolling up
+  const handleLogsScroll = () => {
+    const el = logsContainerRef.current;
+    if (!el) return;
+    const threshold = 16; // px tolerance from bottom
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (distanceFromBottom > threshold) {
+      // User is not at the bottom; pause following
+      if (followTail) setFollowTail(false);
+    } else {
+      // Near bottom; resume following
+      if (!followTail) setFollowTail(true);
+    }
+  };
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-900 via-blue-800 to-blue-700">
@@ -406,17 +530,90 @@ const DeviceManagement = () => {
                 )}
               </div>
             </div>
-            <div className="bg-blue-900/60 rounded-xl p-8 mt-4">
-              <div className="text-blue-100 mb-2 font-semibold flex items-center gap-2">
+            <div className="bg-blue-900/60 rounded-xl p-6 mt-4">
+              <div className="text-blue-100 mb-3 font-semibold flex items-center gap-2">
                 Network Performance
                 {isBackendConnected && sessionId ? (
-                  <span className="text-xs text-green-400">(Live from device)</span>
+                  <span className="text-xs text-green-400">(Live from device · 1s)</span>
                 ) : (
-                  <span className="text-xs text-yellow-400">(Simulated)</span>
+                  <span className="text-xs text-yellow-400">(Simulated · 1s)</span>
                 )}
               </div>
-              <div className="h-40 flex items-center justify-center text-blue-300 text-sm">
-                Live SNR &amp; TX/RX Graph Display
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="h-56 bg-blue-900/50 rounded-lg p-2">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={chartData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#1e3a8a" />
+                      <XAxis dataKey="t" tick={{ fill: '#93c5fd', fontSize: 12 }} hide />
+                      <YAxis tick={{ fill: '#93c5fd', fontSize: 12 }} domain={[0, 'auto']} />
+                      <Tooltip contentStyle={{ background: '#0b1220', border: '1px solid #1e3a8a', color: '#e2e8f0' }} />
+                      <Legend wrapperStyle={{ color: '#93c5fd' }} />
+                      <Line type="monotone" dataKey="snr" stroke="#22d3ee" strokeWidth={2} dot={false} name="SNR (dB)" />
+                      <Line type="monotone" dataKey="signal" stroke="#34d399" strokeWidth={2} dot={false} name="Signal (%)" />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="h-56 bg-blue-900/50 rounded-lg p-2">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={chartData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#1e3a8a" />
+                      <XAxis dataKey="t" tick={{ fill: '#93c5fd', fontSize: 12 }} hide />
+                      <YAxis tick={{ fill: '#93c5fd', fontSize: 12 }} domain={[0, 'auto']} />
+                      <Tooltip contentStyle={{ background: '#0b1220', border: '1px solid #1e3a8a', color: '#e2e8f0' }} />
+                      <Legend wrapperStyle={{ color: '#93c5fd' }} />
+                      <Line type="monotone" dataKey="tx" stroke="#f59e0b" strokeWidth={2} dot={false} name="TX (Mbps)" />
+                      <Line type="monotone" dataKey="rx" stroke="#60a5fa" strokeWidth={2} dot={false} name="RX (Mbps)" />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </div>
+            {/* Live Log Tail inside Monitoring */}
+            <div className="bg-blue-900/60 rounded-xl p-4 mt-6">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-blue-100 text-sm font-semibold">Live Logs</div>
+                <div className="flex items-center gap-3 text-xs text-blue-200">
+                  <label className="inline-flex items-center gap-1 cursor-pointer select-none">
+                    <input type="checkbox" className="accent-cyan-400" checked={followTail} onChange={(e) => setFollowTail(e.target.checked)} />
+                    Follow live
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const el = logsContainerRef.current;
+                      if (el) { el.scrollTop = el.scrollHeight; }
+                      setFollowTail(true);
+                    }}
+                    className="px-2 py-1 rounded bg-blue-700 text-white hover:bg-blue-600"
+                    title="Jump to bottom"
+                  >
+                    Jump to bottom
+                  </button>
+                </div>
+              </div>
+              <div
+                ref={logsContainerRef}
+                onScroll={handleLogsScroll}
+                className="max-h-48 overflow-auto rounded-md"
+                style={{ background: '#0f172a' }}
+              >
+                {logs.length === 0 ? (
+                  <div className="text-blue-300 text-center py-4">Waiting for logs…</div>
+                ) : (
+                  logs.slice(-100).map((log, idx) => (
+                    <div
+                      key={idx}
+                      className="font-mono text-xs mb-1 px-2 py-1"
+                      style={{
+                        color: log.type === 'WARN' ? '#facc15' : log.type === 'INFO' ? '#22d3ee' : '#e5e7eb',
+                        borderLeft: log.type === 'WARN' ? '3px solid #facc15' : log.type === 'INFO' ? '3px solid #22d3ee' : 'none'
+                      }}
+                    >
+                      <span className="text-blue-300">{log.time}</span> {log.type}: {log.message}
+                    </div>
+                  ))
+                )}
+                <div ref={logsEndRef} />
               </div>
             </div>
             {/* Static Device Summary below live metrics */}
@@ -478,22 +675,46 @@ const DeviceManagement = () => {
               {logs.length === 0 ? (
                 <div className="text-blue-300 text-center py-8">No logs available.</div>
               ) : (
-                logs.map((log, idx) => (
-                  <div
-                    key={idx}
-                    className="font-mono text-sm mb-2 px-2 py-1 rounded"
-                    style={{
-                      background: '#0f172a',
-                      color: log.type === 'WARN' ? '#facc15' : log.type === 'INFO' ? '#22d3ee' : '#fff',
-                      borderLeft: log.type === 'WARN' ? '4px solid #facc15' : log.type === 'INFO' ? '4px solid #22d3ee' : 'none'
-                    }}
-                  >
-                    <span className="text-blue-300">{log.time}</span>{' '}
-                    <span className={log.type === 'WARN' ? 'text-yellow-400' : log.type === 'INFO' ? 'text-cyan-400' : 'text-white'}>
-                      {log.type}
-                    </span>: {log.message}
+                <div>
+                  {/* Optional: a contained scroll area for long logs page to avoid page jump */}
+                  <div className="max-h-[70vh] overflow-auto rounded-md" ref={activeTab === 'Logs' ? logsContainerRef : null} onScroll={activeTab === 'Logs' ? handleLogsScroll : undefined} style={{ background: '#0f172a' }}>
+                    {logs.map((log, idx) => (
+                      <div
+                        key={idx}
+                        className="font-mono text-sm mb-2 px-2 py-1 rounded"
+                        style={{
+                          background: 'transparent',
+                          color: log.type === 'WARN' ? '#facc15' : log.type === 'INFO' ? '#22d3ee' : '#fff',
+                          borderLeft: log.type === 'WARN' ? '4px solid #facc15' : log.type === 'INFO' ? '4px solid #22d3ee' : 'none'
+                        }}
+                      >
+                        <span className="text-blue-300">{log.time}</span>{' '}
+                        <span className={log.type === 'WARN' ? 'text-yellow-400' : log.type === 'INFO' ? 'text-cyan-400' : 'text-white'}>
+                          {log.type}
+                        </span>: {log.message}
+                      </div>
+                    ))}
+                    <div ref={activeTab === 'Logs' ? logsEndRef : null} />
                   </div>
-                ))
+                  <div className="flex items-center justify-end gap-3 mt-2 text-xs text-blue-200">
+                    <label className="inline-flex items-center gap-1 cursor-pointer select-none">
+                      <input type="checkbox" className="accent-cyan-400" checked={followTail} onChange={(e) => setFollowTail(e.target.checked)} />
+                      Follow live
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const el = logsContainerRef.current;
+                        if (el) { el.scrollTop = el.scrollHeight; }
+                        setFollowTail(true);
+                      }}
+                      className="px-2 py-1 rounded bg-blue-700 text-white hover:bg-blue-600"
+                      title="Jump to bottom"
+                    >
+                      Jump to bottom
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
           </div>

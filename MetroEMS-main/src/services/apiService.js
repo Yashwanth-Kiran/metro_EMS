@@ -1,7 +1,7 @@
 // API Service for MetroEMS Backend Integration
 // Handles all communication with the FastAPI backend
 
-const API_BASE_URL = 'http://localhost:8002';
+const API_BASE_URL = 'http://localhost:8000';
 
 class ApiService {
     constructor() {

@@ -5,11 +5,8 @@ import apiService from '../services/apiService';
 
 const LoginPage = () => {
   const [licenseKey, setLicenseKey] = useState('');
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
-  const [loginMode, setLoginMode] = useState('license'); // 'license' or 'credentials'
   const navigate = useNavigate();
   
   const demoKey = "METRO-2025-EMS1-ACT1";
@@ -42,22 +39,21 @@ const LoginPage = () => {
       const isBackendAvailable = await apiService.isBackendAvailable();
       
       if (isBackendAvailable) {
-        // Try to authenticate using the default credentials for the license
+        // Authenticate with backend using internal mapping; user only enters activation code
         const defaultUsername = licenseKeyToUsername[licenseKey] || 'MetroAdmin';
         const defaultPassword = 'admin123';
-        
         try {
           const response = await apiService.login(defaultUsername, defaultPassword);
-          navigate('/dashboard', { 
-            state: { 
+          navigate('/dashboard', {
+            state: {
               username: response.username,
               role: response.role,
               org: response.org,
               fromBackend: true
-            } 
+            }
           });
         } catch (authError) {
-          setError('Invalid license key or backend authentication failed');
+          setError('Invalid activation code or backend authentication failed');
         }
       } else {
         // Fallback to demo mode
@@ -77,28 +73,6 @@ const LoginPage = () => {
       }
     } catch (error) {
       setError('Connection error. Please try again.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleCredentialsSubmit = async (e) => {
-    e.preventDefault();
-    setIsLoading(true);
-    setError('');
-
-    try {
-      const response = await apiService.login(username, password);
-      navigate('/dashboard', { 
-        state: { 
-          username: response.username,
-          role: response.role,
-          org: response.org,
-          fromBackend: true
-        } 
-      });
-    } catch (error) {
-      setError('Invalid username or password');
     } finally {
       setIsLoading(false);
     }
@@ -128,36 +102,7 @@ const LoginPage = () => {
           </div>
         )}
 
-        {/* Login Mode Toggle */}
-        <div className="w-full mb-6">
-          <div className="flex bg-blue-900/40 rounded-md p-1">
-            <button
-              type="button"
-              onClick={() => setLoginMode('license')}
-              className={`flex-1 py-2 px-4 rounded text-sm font-medium transition ${
-                loginMode === 'license'
-                  ? 'bg-blue-600 text-white'
-                  : 'text-blue-200 hover:text-white'
-              }`}
-            >
-              License Key
-            </button>
-            <button
-              type="button"
-              onClick={() => setLoginMode('credentials')}
-              className={`flex-1 py-2 px-4 rounded text-sm font-medium transition ${
-                loginMode === 'credentials'
-                  ? 'bg-blue-600 text-white'
-                  : 'text-blue-200 hover:text-white'
-              }`}
-            >
-              Username/Password
-            </button>
-          </div>
-        </div>
-
-        {/* License Key Form */}
-        {loginMode === 'license' && (
+        {/* Activation Code Form (License key only) */}
           <form className="w-full space-y-5" onSubmit={handleLicenseSubmit}>
             <div className="relative">
               <span className="absolute left-3 top-1/2 -translate-y-1/2 text-blue-400">
@@ -167,7 +112,7 @@ const LoginPage = () => {
                 type="text"
                 value={licenseKey}
                 onChange={e => setLicenseKey(e.target.value)}
-                placeholder="Enter your license key"
+                placeholder="Enter your activation code"
                 className="w-full pl-10 pr-3 py-3 rounded-md border-none bg-blue-900/60 text-blue-100 placeholder-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-400 font-semibold tracking-wider"
                 disabled={isLoading}
               />
@@ -182,54 +127,15 @@ const LoginPage = () => {
               ) : (
                 <CheckCircle size={20} className="inline" />
               )}
-              {isLoading ? 'Activating...' : 'Activate License'}
+              {isLoading ? 'Activating...' : 'Activate'}
             </button>
           </form>
-        )}
 
-        {/* Username/Password Form */}
-        {loginMode === 'credentials' && (
-          <form className="w-full space-y-5" onSubmit={handleCredentialsSubmit}>
-            <div className="relative">
-              <input
-                type="text"
-                value={username}
-                onChange={e => setUsername(e.target.value)}
-                placeholder="Username"
-                className="w-full px-4 py-3 rounded-md border-none bg-blue-900/60 text-blue-100 placeholder-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-400"
-                disabled={isLoading}
-              />
-            </div>
-            <div className="relative">
-              <input
-                type="password"
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                placeholder="Password"
-                className="w-full px-4 py-3 rounded-md border-none bg-blue-900/60 text-blue-100 placeholder-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-400"
-                disabled={isLoading}
-              />
-            </div>
-            <button
-              type="submit"
-              disabled={isLoading || !username.trim() || !password.trim()}
-              className="w-full flex items-center justify-center gap-2 bg-blue-700 text-white py-3 rounded-md font-semibold hover:bg-blue-800 transition shadow disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isLoading ? (
-                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-              ) : (
-                <CheckCircle size={20} className="inline" />
-              )}
-              {isLoading ? 'Logging in...' : 'Login'}
-            </button>
-          </form>
-        )}
 
-        {/* Demo License Info */}
-        {loginMode === 'license' && (
+        {/* Demo Activation Code Info */}
           <div className="mt-8 w-full">
             <div className="bg-blue-800/80 border border-blue-600 rounded-md py-2 px-4 text-blue-100 font-semibold text-sm flex flex-col items-center">
-              <span>Demo License:</span>
+              <span>Demo Activation Code:</span>
               <button
                 className="font-bold tracking-wider text-blue-200 bg-blue-700/60 px-3 py-1 rounded mt-1 hover:bg-blue-700 transition cursor-pointer select-all"
                 onClick={handleCopy}
@@ -241,18 +147,7 @@ const LoginPage = () => {
               <span className="text-xs text-blue-300 mt-1">{copied ? "Copied!" : "Click to copy"}</span>
             </div>
           </div>
-        )}
 
-        {/* Demo Credentials Info */}
-        {loginMode === 'credentials' && (
-          <div className="mt-8 w-full">
-            <div className="bg-blue-800/80 border border-blue-600 rounded-md py-3 px-4 text-blue-100 text-sm">
-              <div className="text-center font-semibold mb-2">Demo Credentials:</div>
-              <div className="text-blue-200">Username: <span className="font-mono">MetroAdmin</span></div>
-              <div className="text-blue-200">Password: <span className="font-mono">admin123</span></div>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );

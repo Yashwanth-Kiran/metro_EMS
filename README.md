@@ -1,4 +1,5 @@
-# MetroEMS
+<<<<<<< HEAD
+# metro_EMS
 
 This repository contains a React frontend and a Python FastAPI backend for MetroEMS Station Radios monitoring and management.
 
@@ -33,3 +34,6 @@ uvicorn real_backend:app --reload --host 0.0.0.0 --port 8000
 - Device discovery uses ARP + ping; you can pin a device via environment variables:
   - `METRO_STATION_RADIO_IP` and optional `METRO_STATION_RADIO_MAC`
 - The frontend only lists reachable Station Radios (no simulated devices).
+=======
+# metro_EMS
+>>>>>>> b1dd6255ffcc731257ad6121de6fa7308dbac9ba

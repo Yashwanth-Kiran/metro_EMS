@@ -10,6 +10,7 @@ import time
 from typing import List, Dict
 import subprocess
 import re
+import os
 
 def get_local_networks():
     """Get local network ranges from system configuration"""
@@ -101,54 +102,67 @@ def calculate_network_base(ip_address, subnet_mask):
         print(f"Error calculating network base: {e}")
         return None
 
-def ping_host(ip):
-    """Quick ping test to check if host is reachable"""
+SYS_DESCR_OID = "1.3.6.1.2.1.1.1.0"
+SYS_NAME_OID = "1.3.6.1.2.1.1.5.0"
+SYS_OBJECTID_OID = "1.3.6.1.2.1.1.2.0"
+SYS_UPTIME_OID = "1.3.6.1.2.1.1.3.0"
+PROXIM_ENTERPRISE_OID = "1.3.6.1.4.1.841"
+PROXIM_PRODUCT_DESCR_OID = "1.3.6.1.4.1.841.1.1.2.1.5.7"  # productDescr
+PROXIM_SYSTEM_NAME_OID = "1.3.6.1.4.1.841.1.1.2.1.5.8"     # systemName
+
+def snmp_alive(ip: str, community: str) -> bool:
+    """Check device liveness by trying an SNMP GET on sysDescr.
+    Avoids ICMP ping; relies purely on SNMP OID reachability.
+    """
     try:
-        # Use ping command with timeout
-        result = subprocess.run(
-            ['ping', '-n', '1', '-w', '500', ip], 
-            capture_output=True, 
-            text=True,
-            timeout=2
-        )
-        return result.returncode == 0
-    except:
+        from snmp_client import snmp_get
+        sys_descr = snmp_get(ip, community, SYS_DESCR_OID)
+        return sys_descr is not None and sys_descr != "Simulated SNMP Response"
+    except Exception:
         return False
 
-def scan_for_snmp_devices(networks: List[Dict], max_threads=20) -> List[Dict]:
-    """Scan network ranges for SNMP-enabled devices"""
+def scan_for_snmp_devices(networks: List[Dict], max_threads=20, limit_hosts: int = None) -> List[Dict]:
+    """Scan network ranges for SNMP-enabled devices.
+
+    Parameters:
+        networks: List of network dicts (from get_local_networks())
+        max_threads: Maximum concurrent scanning threads.
+        limit_hosts: If set, limits the total number of IP addresses attempted (across all networks)
+                     to this number to speed up discovery. Once the limit is reached, no further
+                     IPs are queued for scanning.
+    """
     from snmp_client import snmp_get
+    community = os.getenv("METRO_SNMP_COMMUNITY", "public")
     
     devices = []
     threads = []
     devices_lock = threading.Lock()
+    count_lock = threading.Lock()
+    attempted_hosts = 0
+    stop_scanning = False
     
     def scan_ip(ip, network_info):
         try:
-            # First, quick ping test
-            if not ping_host(ip):
-                return
-                
-            # Try SNMP discovery
-            # System description OID
-            sys_descr = snmp_get(ip, "public", "1.3.6.1.2.1.1.1.0")
+            # SNMP-only discovery (no ping). Try multiple OIDs for liveness.
+            # Try a set of permissive OIDs for liveness
+            sys_descr = snmp_get(ip, community, SYS_DESCR_OID)
+            if not sys_descr:
+                sys_descr = snmp_get(ip, community, PROXIM_PRODUCT_DESCR_OID)
+            if not sys_descr:
+                sys_descr = snmp_get(ip, community, SYS_UPTIME_OID)
             if sys_descr and sys_descr != "Simulated SNMP Response":
                 # Get system name
-                sys_name = snmp_get(ip, "public", "1.3.6.1.2.1.1.5.0") or "Unknown Device"
+                sys_name = snmp_get(ip, community, SYS_NAME_OID) or \
+                           snmp_get(ip, community, PROXIM_SYSTEM_NAME_OID) or \
+                           "Unknown Device"
+
+                # Identify vendor via sysObjectID when possible
+                sys_objectid = snmp_get(ip, community, SYS_OBJECTID_OID) or ""
+                is_proxim = isinstance(sys_objectid, str) and sys_objectid.startswith(PROXIM_ENTERPRISE_OID)
                 
                 # Try to identify if it's a Station Radio
-                device_type = "Unknown"
-                is_station_radio = False
-                
-                # Check for Station Radio indicators in system description
-                sys_descr_lower = sys_descr.lower()
-                if any(keyword in sys_descr_lower for keyword in ['radio', 'proxim', 'tsunami', 'wireless', 'bridge']):
-                    device_type = "Station Radio"
-                    is_station_radio = True
-                elif any(keyword in sys_descr_lower for keyword in ['switch', 'router', 'cisco', 'juniper']):
-                    device_type = "Network Equipment"
-                elif any(keyword in sys_descr_lower for keyword in ['windows', 'linux', 'server']):
-                    device_type = "Computer/Server"
+                device_type = "Station Radio" if is_proxim else "Unknown"
+                is_station_radio = is_proxim or ('radio' in sys_descr.lower())
                 
                 with devices_lock:
                     devices.append({
@@ -158,16 +172,19 @@ def scan_for_snmp_devices(networks: List[Dict], max_threads=20) -> List[Dict]:
                         "device_type": device_type,
                         "is_station_radio": is_station_radio,
                         "network": network_info['adapter'],
-                        "hint": "station_radio" if is_station_radio else "other"
+                        "hint": "station_radio" if is_station_radio else "other",
+                        "enterprise": sys_objectid
                     })
                     
         except Exception as e:
             # Silent fail for scan - don't spam logs
             pass
     
-    print(f"Scanning {len(networks)} networks for Station Radio devices...")
+    print(f"Scanning {len(networks)} networks for Station Radio devices (SNMP-only)...")
     
     for network in networks:
+        if stop_scanning:
+            break
         base = network['base']
         print(f"Scanning network: {base}x ({network['adapter']})")
         
@@ -194,11 +211,17 @@ def scan_for_snmp_devices(networks: List[Dict], max_threads=20) -> List[Dict]:
             
         # Standard /24 scan
         for host in scan_range:
+            # Check host attempt limit
+            with count_lock:
+                if limit_hosts is not None and attempted_hosts >= limit_hosts:
+                    stop_scanning = True
+                    break
+                attempted_hosts += 1
             ip = f"{base}{host}"
             thread = threading.Thread(target=scan_ip, args=(ip, network))
             threads.append(thread)
             thread.start()
-            
+
             # Limit concurrent threads
             if len(threads) >= max_threads:
                 for t in threads:

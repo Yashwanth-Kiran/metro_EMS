@@ -1,7 +1,9 @@
 // API Service for MetroEMS Backend Integration
 // Handles all communication with the FastAPI backend
 
-const API_BASE_URL = 'http://localhost:8000';
+// Allow overriding the backend URL via environment variable
+// e.g., set REACT_APP_API_BASE=http://localhost:8002 for the updated backend
+const API_BASE_URL = process.env.REACT_APP_API_BASE || 'http://localhost:8000';
 
 class ApiService {
     constructor() {
@@ -86,10 +88,17 @@ class ApiService {
         return await this.request('/wizard/device-types');
     }
 
-    async discoverDevices(deviceType = 'station_radio') {
+    async discoverDevices(deviceType = 'station_radio', opts = {}) {
+        // opts: { ip, ips, community, version, port }
+        const payload = { device_type: deviceType };
+        if (opts.ip) payload.ip = opts.ip;
+        if (opts.ips) payload.ips = opts.ips;
+        if (opts.community) payload.community = opts.community;
+        if (opts.version) payload.version = opts.version;
+        if (opts.port) payload.port = opts.port;
         return await this.request('/wizard/discover', {
             method: 'POST',
-            body: JSON.stringify({ device_type: deviceType })
+            body: JSON.stringify(payload)
         });
     }
 
@@ -101,14 +110,15 @@ class ApiService {
     }
 
     // Session management
-    async startSession(ip, deviceType, user) {
+    async startSession(ip, deviceType, user, opts = {}) {
+        const payload = { ip, device_type: deviceType, user };
+        if (opts.community) payload.community = opts.community;
+        if (opts.version) payload.version = opts.version;
+        if (opts.port) payload.port = opts.port;
+        if (opts.oid) payload.oid = opts.oid;
         return await this.request('/session/start', {
             method: 'POST',
-            body: JSON.stringify({
-                ip,
-                device_type: deviceType,
-                user
-            })
+            body: JSON.stringify(payload)
         });
     }
 
@@ -208,6 +218,11 @@ class ApiService {
             console.warn('Failed to get device monitoring data:', error);
             return null;
         }
+    }
+
+    // Refresh summary (re-poll OIDs)
+    async refreshSession(sessionId) {
+        return await this.request(`/session/${sessionId}/refresh`, { method: 'POST' });
     }
 
     // Device Logs Methods (enhanced)

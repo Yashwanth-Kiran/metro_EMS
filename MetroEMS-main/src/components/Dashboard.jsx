@@ -91,6 +91,15 @@ function Dashboard() {
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [discoveryError, setDiscoveryError] = useState('');
   const [isBackendConnected, setIsBackendConnected] = useState(false);
+  const [targetIp, setTargetIp] = useState('');
+  const [community, setCommunity] = useState('public');
+  // load persisted discovery params
+  useEffect(() => {
+    const lastIp = localStorage.getItem('metro_last_target_ip');
+    const lastComm = localStorage.getItem('metro_last_community');
+    if (lastIp) setTargetIp(lastIp);
+    if (lastComm) setCommunity(lastComm);
+  }, []);
   const navigate = useNavigate();
   const location = useLocation();
   
@@ -124,7 +133,13 @@ function Dashboard() {
         throw new Error('Backend server not available');
       }
 
-      const response = await apiService.discoverDevices('station_radio');
+      // persist parameters
+      if (targetIp) localStorage.setItem('metro_last_target_ip', targetIp);
+      if (community) localStorage.setItem('metro_last_community', community);
+      const response = await apiService.discoverDevices('station_radio', {
+        ip: targetIp || undefined,
+        community: community || undefined
+      });
       const devices = response.candidates || [];
       
       // Convert discovered devices to the expected format
@@ -165,9 +180,10 @@ function Dashboard() {
       try {
         // Start a session for the device
         const sessionResponse = await apiService.startSession(
-          device.ip, 
-          'station_radio', 
-          username
+          device.ip,
+          'station_radio',
+          username,
+          { community }
         );
         
         // Only pass JSON-serializable data in history state (exclude React elements like `icon`)
@@ -241,7 +257,7 @@ function Dashboard() {
                 <h2 className="text-2xl font-bold text-white">{selectedCategory}</h2>
                 
                 {selectedCategory === 'Station Radios' && (
-                  <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-4 flex-wrap">
                     {/* Backend Connection Status */}
                     <div className="flex items-center gap-2">
                       {isBackendConnected ? (
@@ -253,10 +269,29 @@ function Dashboard() {
                         {isBackendConnected ? 'Backend Connected' : 'Demo Mode'}
                       </span>
                     </div>
+                    <input
+                      type="text"
+                      placeholder="Target IP (optional)"
+                      value={targetIp}
+                      onChange={e => setTargetIp(e.target.value.trim())}
+                      className="px-2 py-1 rounded bg-blue-900/50 text-blue-100 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-400 placeholder-blue-300/50"
+                      style={{ width: '160px' }}
+                    />
+                    <input
+                      type="text"
+                      placeholder="Community"
+                      value={community}
+                      onChange={e => setCommunity(e.target.value)}
+                      className="px-2 py-1 rounded bg-blue-900/50 text-blue-100 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-400"
+                      style={{ width: '130px' }}
+                    />
                     
                     {/* Refresh Button */}
                     <button
-                      onClick={discoverStationRadios}
+                      onClick={() => {
+                        if (isDiscovering) return; // debounce guard
+                        discoverStationRadios();
+                      }}
                       disabled={isDiscovering}
                       className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md flex items-center gap-2 transition disabled:opacity-50"
                     >

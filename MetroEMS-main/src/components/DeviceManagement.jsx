@@ -70,6 +70,7 @@ const DeviceManagement = () => {
   const [error, setError] = useState(null);
   const [deviceSession, setDeviceSession] = useState(null);
   const [realDeviceData, setRealDeviceData] = useState(null);
+  const [summaryExtras, setSummaryExtras] = useState({});
   const [chartData, setChartData] = useState([]); // rolling 60s window
   const MAX_POINTS = 60;
   
@@ -617,13 +618,44 @@ const DeviceManagement = () => {
               </div>
             </div>
             {/* Static Device Summary below live metrics */}
+            <div className="flex justify-end mb-2">
+              {isBackendConnected && sessionId && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      const refreshed = await apiService.refreshSession(sessionId);
+                      setSummaryExtras({
+                        sysDescr: refreshed.sysDescr,
+                        sysUpTime: refreshed.sysUpTime,
+                        system_name: refreshed.system_name
+                      });
+                      if (refreshed.system_name) {
+                        setConfig(prev => ({ ...prev, systemName: refreshed.system_name }));
+                      }
+                    } catch (e) {
+                      console.warn('Refresh failed', e);
+                    }
+                  }}
+                  className="bg-blue-600 hover:bg-blue-700 text-white text-sm px-3 py-1 rounded-md flex items-center gap-2"
+                >
+                  <RefreshCw size={14} /> Refresh Summary
+                </button>
+              )}
+            </div>
             <DeviceSummary device={{
-              name: deviceSession?.device_info?.name || location.state?.deviceInfo?.name,
+              name: summaryExtras.system_name || deviceSession?.device_info?.system_name || deviceSession?.device_info?.name || location.state?.deviceInfo?.name,
               ipAddress: deviceSession?.device_info?.ip_address || location.state?.deviceInfo?.ip,
+              ip: deviceSession?.device_info?.ip_address || location.state?.deviceInfo?.ip,
               device_type: 'station_radio',
               connection_verified: !!(isBackendConnected && sessionId),
               last_verified: new Date().toISOString(),
-              description: 'Real-time monitoring and configuration for Station Radio'
+              sysDescr: summaryExtras.sysDescr || realDeviceData?.config?.sysDescr,
+              sysUpTime: summaryExtras.sysUpTime || realDeviceData?.config?.sysUpTime,
+              radio_mode: deviceSession?.device_info?.radio_mode,
+              bandwidth: deviceSession?.device_info?.bandwidth,
+              channel: deviceSession?.device_info?.channel,
+              ssid: deviceSession?.device_info?.ssid
             }} />
           </div>
         )}

@@ -1,6 +1,6 @@
 ## MetroEMS – Real Station Radio Monitoring & Management
 
-No fake devices. No simulation. The backend only lists and manages actually reachable Station Radio hardware via SNMP.
+The backend only lists and manages actually reachable Station Radio hardware via SNMP.
 
 ---
 
@@ -25,7 +25,6 @@ No fake devices. No simulation. The backend only lists and manages actually reac
 ### 1. Overview
 MetroEMS provides a focused Station Radio operations console:
 - Authentication-first UI (simple token demo)
-- Targeted SNMP discovery of real hardware (no ICMP ping, no fake inventory)
 - Fast, single‑IP discovery path + capped broad discovery (limited to 15 hosts)
 - Device session start with SNMP verification (sysDescr/sysName/productDescr)
 - Live 1-second metrics (signal/SNR/tx/rx with light jitter for motion)
@@ -176,7 +175,7 @@ curl -X POST http://localhost:8002/wizard/discover -H "Content-Type: application
 | pysnmp import error (Python 3.13) | Upstream compatibility issue | Raw fallback auto-engages; ignore unless needing advanced SNMP |
 
 ### 14. Roadmap / Next Enhancements
-- Map real radioMode/channel/bandwidth/SSID OIDs
+- Map radioMode/channel/bandwidth/SSID OIDs
 - Human-readable sysUpTime formatting
 - Optional periodic auto-refresh toggle in UI
 - SNMPv3 credential probing UI
